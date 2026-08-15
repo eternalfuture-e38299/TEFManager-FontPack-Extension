@@ -5,8 +5,7 @@
   "description": "字体包核心模块",
   "version": "1.0.0",
   "versionCode": 1,
-  "detailedInformationURL": "",
-  "updateURL": "",
+  "detailedInformationURL": "https://github.com/eternalfuture-e38299/TEFManager-FontPack-Extension",
   "dependence": [],
   "support": {
     "android": {

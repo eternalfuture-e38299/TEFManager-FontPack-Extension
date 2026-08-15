@@ -161,7 +161,7 @@ static patch_handle_t CreateGlyphArray(const std::vector<BMFontChar> &chars,
         glyph.Cropping_Width = bmChar.width;
         glyph.Cropping_Height = bmChar.height;
         glyph.LeftSideBearing = xoffset;
-        glyph.RightSideBearing = static_cast<float>(xadvance - bmChar.width) - xoffset;
+        glyph.RightSideBearing = xadvance - static_cast<float>(bmChar.width) - xoffset;
         glyph.Width = width;
         glyph.WidthIncludingBearings = static_cast<float>(xadvance);
         glyph.TexureIndex = static_cast<uint8_t>(bmChar.page);
@@ -232,7 +232,7 @@ patch_handle_t FontManager::CreateSpriteFontFromBMFont(const std::string &fontNa
 
     LOGI("Successfully created Glyph array");
 
-    constexpr uint16_t defaultChar = L'*';
+    constexpr uint16_t defaultChar = '*';
     // 调用 SpriteFont 构造函数
     // SpriteFont(Texture2D[] textures, Glyph[] glyphs, int lineSpacing, float spacing, char? defaultCharacter)
 
