@@ -100,7 +100,7 @@ namespace {
     };
 }
 
-// 在 CreateGlyphArray 函数中添加补偿逻辑
+// 从 BMFont 字符构建游戏 Glyph 数组
 static patch_handle_t CreateGlyphArray(const std::vector<BMFontChar> &chars,
                                         const std::vector<TextureData> &textures) {
     if (chars.empty()) {
@@ -117,20 +117,10 @@ static patch_handle_t CreateGlyphArray(const std::vector<BMFontChar> &chars,
         return nullptr;
     }
 
-    // ===== 基本拉丁文字距补偿 =====
-    constexpr float LATIN_SPACING_COMPENSATION = 0.5f;
-
-    // 基本拉丁文范围：ASCII 33-127
-
-    // 获取数组元素大小
-    constexpr size_t elementSize = sizeof(GlyphStruct);
-    LOGD("Glyph element size: %zu, Latin compensation: %.1f", elementSize, LATIN_SPACING_COMPENSATION);
-
     // 填充数据
     size_t validCount = 0;
     size_t skippedCount = 0;
     for (size_t i = 0; i < chars.size(); i++) {
-        constexpr int LATIN_START = 33;
         const auto& bmChar = chars[i];
 
         // ===== 检查字符是否超出 UTF-16 范围 =====
@@ -153,32 +143,10 @@ static patch_handle_t CreateGlyphArray(const std::vector<BMFontChar> &chars,
         GlyphStruct glyph{};
         memset(&glyph, 0, sizeof(GlyphStruct));
 
-        // 基础值
-        int xadvance = bmChar.xadvance;
-        auto xoffset = static_cast<float>(bmChar.xoffset);
+        // 基础值：所有字符统一处理，不做任何额外补偿
+        const auto xadvance = static_cast<float>(bmChar.xadvance);
+        const auto xoffset = static_cast<float>(bmChar.xoffset);
         const auto width = static_cast<float>(bmChar.width);
-
-        // ===== 基本拉丁文字距补偿 =====
-        // 只对 ASCII 可见字符 (33-127) 应用补偿
-        if (constexpr int LATIN_END = 127; bmChar.id >= LATIN_START && bmChar.id <= LATIN_END) {
-            // 应用补偿：xadvance += 补偿值 * 2，xoffset += 补偿值
-            // 这样字符间距会调整，同时保持对齐
-            float compensatedXadvance = static_cast<float>(xadvance) + (LATIN_SPACING_COMPENSATION * 2.0f);
-            float compensatedXoffset = xoffset + LATIN_SPACING_COMPENSATION;
-
-            // 确保 xadvance 不会小于字符宽度（防止重叠）
-            if (compensatedXadvance < width) {
-                compensatedXadvance = width;
-            }
-
-            // 确保 xoffset 不会导致字符跑出边界
-            if (compensatedXoffset < 0) {
-                compensatedXoffset = 0;
-            }
-
-            xadvance = static_cast<int>(compensatedXadvance);
-            xoffset = compensatedXoffset;
-        }
 
         // 填充字段
         glyph.Character = static_cast<uint32_t>(bmChar.id);
@@ -186,7 +154,9 @@ static patch_handle_t CreateGlyphArray(const std::vector<BMFontChar> &chars,
         glyph.BoundsInTexture_Y = bmChar.y;
         glyph.BoundsInTexture_Width = bmChar.width;
         glyph.BoundsInTexture_Height = bmChar.height;
-        glyph.Cropping_X = bmChar.xoffset;
+        // 关键：Cropping.X 必须为 0，水平偏移只由 LeftSideBearing 承担。
+        // 游戏渲染按 LeftSideBearing + Cropping.X 定位，两者都填 xoffset 会导致字形右移。
+        glyph.Cropping_X = 0;
         glyph.Cropping_Y = bmChar.yoffset;
         glyph.Cropping_Width = bmChar.width;
         glyph.Cropping_Height = bmChar.height;
@@ -204,8 +174,8 @@ static patch_handle_t CreateGlyphArray(const std::vector<BMFontChar> &chars,
         LOGW("Skipped %zu characters that exceed UTF-16 BMP range", skippedCount);
     }
 
-    LOGI("Successfully created Glyph array: %zu/%zu characters (Latin compensation: %.1f)",
-         validCount, chars.size(), LATIN_SPACING_COMPENSATION);
+    LOGI("Successfully created Glyph array: %zu/%zu characters",
+         validCount, chars.size());
 
     return array;
 }
