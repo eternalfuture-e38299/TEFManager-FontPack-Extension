@@ -32,8 +32,8 @@ static constexpr module_info_t g_module_info = {
     .pkg_id = "eternal.future.fontpackextension", // 唯一包名
     .name = "FontPack Extension", // 插件名称
     .author = "eternalfuture-e38299", // 作者
-    .version = "1.0.0", // 版本
-    .version_code = 1, // 版本代码
+    .version = "1.0.1", // 版本
+    .version_code = 2, // 版本代码
     .api_version = 1, // API版本
     .plugin_dependencies_sizes = 0, // 依赖数量（无依赖设为0）
     .plugin_dependencies = nullptr, // 依赖列表（无依赖设为NULL）
@@ -88,12 +88,12 @@ static bool init_module(module_entry_t *entry) {
 
     FontManager::font_pack = std::make_unique<FontPack>(selectedPath.value());
 
-    const TEFKernel::PatchLib::Type SpriteFont("Microsoft.Xna.Framework.Graphics", "SpriteFont");
+    FontManager::SpriteFont = TEFKernel::PatchLib::Type("Microsoft.Xna.Framework.Graphics", "SpriteFont");
     const TEFKernel::PatchLib::Type Rectangle("Microsoft.Xna.Framework", "Rectangle");
 
-    FontManager::Glyph = SpriteFont.GetInnerType("Glyph");
+    FontManager::Glyph = FontManager::SpriteFont.GetInnerType("Glyph");
 
-    FontManager::SpriteFont_ctor = SpriteFont.GetMethod(".ctor", 5);
+    FontManager::SpriteFont_ctor = FontManager::SpriteFont.GetMethod(".ctor", 5);
     FontManager::Rectangle_ctor = Rectangle.GetMethod(".ctor", 4);
 
     const TEFKernel::PatchLib::Type ContentManager("Microsoft.Xna.Framework.Content", "ContentManager");

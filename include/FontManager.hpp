@@ -29,6 +29,7 @@
 namespace FontManager {
     inline std::unique_ptr<FontPack> font_pack = nullptr;
 
+    inline TEFKernel::PatchLib::Type SpriteFont{};
     // SpriteFont(Texture2D[] textures, Glyph[] glyphs, int lineSpacing, float spacing, char? defaultCharacter)
     inline TEFKernel::PatchLib::Method SpriteFont_ctor{};
 

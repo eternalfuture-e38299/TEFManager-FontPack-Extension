@@ -12,6 +12,12 @@ add_library(fontpack_extension SHARED
         src/FontManager.cpp
 )
 
+#[[
+set(ANDROID ON)
+add_compile_definitions(__ANDROID__)
+set(CMAKE_SYSROOT /home/eternalfuture/Android/Sdk/ndk/28.0.13004108/toolchains/llvm/prebuilt/linux-x86_64/sysroot/)
+]]
+
 include_directories(include)
 
 add_subdirectory(pugixml-1.16)

@@ -83,26 +83,26 @@ static patch_handle_t CreateTexture2DArray(const std::vector<TextureData> &textu
 namespace {
     // 创建 Glyph 数组
     struct GlyphStruct {
-        uint32_t Character;              // offset 0x00
-        int32_t BoundsInTexture_X;       // offset 0x04
-        int32_t BoundsInTexture_Y;       // offset 0x08
-        int32_t BoundsInTexture_Width;   // offset 0x0C
-        int32_t BoundsInTexture_Height;  // offset 0x10
-        int32_t Cropping_X;              // offset 0x14
-        int32_t Cropping_Y;              // offset 0x18
-        int32_t Cropping_Width;          // offset 0x1C
-        int32_t Cropping_Height;         // offset 0x20
-        float LeftSideBearing;           // offset 0x24
-        float RightSideBearing;          // offset 0x28
-        float Width;                     // offset 0x2C
-        float WidthIncludingBearings;    // offset 0x30
-        uint8_t TexureIndex;             // offset 0x34
+        uint32_t Character; // offset 0x00
+        int32_t BoundsInTexture_X; // offset 0x04
+        int32_t BoundsInTexture_Y; // offset 0x08
+        int32_t BoundsInTexture_Width; // offset 0x0C
+        int32_t BoundsInTexture_Height; // offset 0x10
+        int32_t Cropping_X; // offset 0x14
+        int32_t Cropping_Y; // offset 0x18
+        int32_t Cropping_Width; // offset 0x1C
+        int32_t Cropping_Height; // offset 0x20
+        float LeftSideBearing; // offset 0x24
+        float RightSideBearing; // offset 0x28
+        float Width; // offset 0x2C
+        float WidthIncludingBearings; // offset 0x30
+        uint8_t TexureIndex; // offset 0x34
     };
 }
 
 // 从 BMFont 字符构建游戏 Glyph 数组
 static patch_handle_t CreateGlyphArray(const std::vector<BMFontChar> &chars,
-                                        const std::vector<TextureData> &textures) {
+                                       const std::vector<TextureData> &textures) {
     if (chars.empty()) {
         LOGE("No characters to create glyph array");
         return nullptr;
@@ -121,17 +121,16 @@ static patch_handle_t CreateGlyphArray(const std::vector<BMFontChar> &chars,
     size_t validCount = 0;
     size_t skippedCount = 0;
     for (size_t i = 0; i < chars.size(); i++) {
-        const auto& bmChar = chars[i];
+        const auto &bmChar = chars[i];
 
         // ===== 检查字符是否超出 UTF-16 范围 =====
         // UTF-16 能表示的最大码点是 0x10FFFF
         // 但 BMP (基本多文种平面) 范围是 0x0000 - 0xFFFF
         // Terraria 的 char 类型是 16 位，只能表示 BMP 字符
-        if (bmChar.id > 0xFFFF) {
-            LOGW("Character 0x%X (index %zu) exceeds UTF-16 BMP range (0xFFFF), skipping",
-                 bmChar.id, i);
+        if (bmChar.id >= 0xFFFF) {
+            LOGW("Skipping char id=0x%X (out of index table range)", bmChar.id);
             skippedCount++;
-            continue;  // 跳过这个字符
+            continue;
         }
 
         if (bmChar.page >= static_cast<int>(textures.size())) {
@@ -188,6 +187,26 @@ static std::unordered_map<std::string, std::string> g_fontNameMap = {
     {"Content/Fonts/Item_Stack", "item_stack"}
 };
 
+// 从字体字符中挑选一个合适的默认字符
+// 优先级：'□' (U+25A1) > '*' > '?' > null
+static uint32_t PickDefaultCharacter(const std::vector<BMFontChar> &chars) {
+    if (chars.empty()) return 0;
+
+    bool hasBox = false, hasStar = false, hasQuestion = false;
+
+    for (const auto &c : chars) {
+        if (const auto id = static_cast<uint32_t>(c.id); id == 0x25A1) hasBox = true;
+        else if (id == '*') hasStar = true;
+        else if (id == '?') hasQuestion = true;
+        if (hasBox && hasStar && hasQuestion) break;
+    }
+
+    if (hasBox)      return (0x25A1u << 16) | 1u;
+    if (hasStar)     return ('*' << 16) | 1u;
+    if (hasQuestion) return ('?' << 16) | 1u;
+    return 0;
+}
+
 patch_handle_t FontManager::CreateSpriteFontFromBMFont(const std::string &fontName) {
     if (!font_pack) {
         LOGE("FontPack not loaded");
@@ -232,18 +251,29 @@ patch_handle_t FontManager::CreateSpriteFontFromBMFont(const std::string &fontNa
 
     LOGI("Successfully created Glyph array");
 
-    constexpr uint16_t defaultChar = '*';
     // 调用 SpriteFont 构造函数
     // SpriteFont(Texture2D[] textures, Glyph[] glyphs, int lineSpacing, float spacing, char? defaultCharacter)
 
     const float spacing = static_cast<float>(font->info.spacing[0] + font->info.spacing[1]) / 2.0f;
 
-    patch_handle_t spriteFont = SpriteFont_ctor.InvokeConstructor(
+    patch_handle_t spriteFont = SpriteFont.NewInstance(); /*SpriteFont_ctor.InvokeConstructor(
         textureArray,
         glyphArray,
         font->common.lineHeight,
         spacing, // spacing
         defaultChar // default character (null)
+    );*/
+
+    auto ctor = reinterpret_cast<void(*)(void *, void *, void *, int, float, uint32_t)>(SpriteFont_ctor.GetPointer());
+
+
+    const uint32_t  defaultCharNullable = PickDefaultCharacter(font->chars);
+    ctor(spriteFont,
+         textureArray,
+         glyphArray,
+         font->common.lineHeight,
+         spacing, // spacing
+         defaultCharNullable // default character (null)
     );
 
     if (spriteFont) {
