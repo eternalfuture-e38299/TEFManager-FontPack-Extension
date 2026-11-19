@@ -26,42 +26,144 @@
 #include "tefkernel-cpp-wrapper/patchlib/struct/string.hpp"
 #include "tefkernel-cpp-wrapper/patchlib/struct/array.hpp"
 #include "tefkernel-cpp-wrapper/tefkernel/terraria/texture2d.h"
+#include "tefkernel-cpp-wrapper/tefkernel/patchlib/type.h"
+#include "tefkernel-cpp-wrapper/tefkernel/patchlib/method.h"
+#include "tefkernel-cpp-wrapper/tefkernel/patchlib/field.h"
+
+#include <cstring>
+#include <vector>
+
+// ---------------------------------------------------------------------------
+// 字体图集贴图：按游戏原生 DynamicSpriteFont 的方式创建
+//
+// 原版字体走 UnityEngine.ImageConversion.LoadImage()，它创建的是
+//   mipChain = true, filterMode = Bilinear, wrapMode = Clamp
+// 的 Texture2D。之前这里走 terraria_texture2d_create()（mipChain=false +
+// Point），游戏 UI 缩放时既糊又有锯齿。这里直接用 patchlib 调 Unity API，
+// 和原生字体保持一致；拿不到 API 时再退回内核的通用创建函数。
+// ---------------------------------------------------------------------------
+namespace {
+    struct UnityTexApi {
+        patch_handle_t tex_cls = PATCH_NULL;
+        patch_handle_t xna_tex_cls = PATCH_NULL;
+        patch_handle_t ctor = PATCH_NULL;       // Texture2D(int,int,TextureFormat,bool)
+        patch_handle_t get_writable = PATCH_NULL; // GetWritableImageData(int)
+        patch_handle_t apply = PATCH_NULL;      // Apply()
+        patch_handle_t set_filter = PATCH_NULL; // Texture.set_filterMode(int)
+        patch_handle_t set_wrap = PATCH_NULL;   // Texture.set_wrapMode(int)
+        patch_handle_t xna_ctor = PATCH_NULL;   // XNA Texture2D(UnityEngine.Texture2D)
+        bool ready = false;
+        bool tried = false;
+    };
+
+    UnityTexApi &unity_tex_api() {
+        static UnityTexApi api;
+        if (api.tried) return api;
+        api.tried = true;
+
+        api.tex_cls = patchlib_type_get_type("UnityEngine", "Texture2D");
+        patch_handle_t base_tex = patchlib_type_get_type("UnityEngine", "Texture");
+        api.xna_tex_cls = patchlib_type_get_type("Microsoft.Xna.Framework.Graphics", "Texture2D");
+        if (patchlib_is_valid(api.tex_cls)) {
+            api.ctor = patchlib_type_get_method_by_param_count(api.tex_cls, ".ctor", 4);
+            api.get_writable = patchlib_type_get_method_by_param_count(api.tex_cls, "GetWritableImageData", 1);
+            api.apply = patchlib_type_get_method_by_param_count(api.tex_cls, "Apply", 0);
+        }
+        if (patchlib_is_valid(base_tex)) {
+            api.set_filter = patchlib_type_get_method_by_param_count(base_tex, "set_filterMode", 1);
+            api.set_wrap = patchlib_type_get_method_by_param_count(base_tex, "set_wrapMode", 1);
+        }
+        if (patchlib_is_valid(api.xna_tex_cls)) {
+            api.xna_ctor = patchlib_type_get_method_by_param_count(api.xna_tex_cls, ".ctor", 1);
+        }
+        api.ready = patchlib_is_valid(api.tex_cls) && patchlib_is_valid(api.xna_tex_cls) &&
+                    patchlib_is_valid(api.ctor) && patchlib_is_valid(api.get_writable) &&
+                    patchlib_is_valid(api.apply) && patchlib_is_valid(api.set_filter) &&
+                    patchlib_is_valid(api.set_wrap) && patchlib_is_valid(api.xna_ctor);
+        if (!api.ready) {
+            LOGW("font texture: Unity Texture2D API incomplete, fallback to terraria_texture2d_create");
+        }
+        return api;
+    }
+
+    // 统一转成 RGBA32（BMFont 的 PNG 本来就是 RGBA，但防御 3/1 通道）
+    std::vector<unsigned char> to_rgba(const TextureData &t) {
+        const size_t px = static_cast<size_t>(t.width) * static_cast<size_t>(t.height);
+        if (t.channels == 4 && t.data.size() >= px * 4) return t.data;
+        std::vector<unsigned char> out(px * 4, 255);
+        for (size_t i = 0; i < px; ++i) {
+            if (t.channels == 3 && t.data.size() >= px * 3) {
+                out[i*4+0] = t.data[i*3+0];
+                out[i*4+1] = t.data[i*3+1];
+                out[i*4+2] = t.data[i*3+2];
+                out[i*4+3] = 255;
+            } else if (t.channels == 1 && t.data.size() >= px) {
+                const unsigned char a = t.data[i];
+                out[i*4+0] = a; out[i*4+1] = a; out[i*4+2] = a; out[i*4+3] = a;
+            }
+        }
+        return out;
+    }
+}
 
 static patch_handle_t CreateTexture2D(const TextureData &texture) {
-    // 根据通道数确定纹理格式
-    texture_format_t format;
-    switch (texture.channels) {
-        case 1:
-            format = TEXTURE_FORMAT_ALPHA8;
-            break;
-        case 3:
-        case 4:
-            format = TEXTURE_FORMAT_RGBA32;
-            break;
-        default:
-            LOGE("Unsupported texture channels: %d", texture.channels);
-            return nullptr;
+    UnityTexApi &api = unity_tex_api();
+    if (!api.ready) {
+        // 兜底：内核旧接口（Point + 无 mipmap）
+        patch_handle_t texHandle = terraria_texture2d_create(
+            texture.width, texture.height, TEXTURE_FORMAT_RGBA32,
+            const_cast<void *>(static_cast<const void *>(texture.data.data())),
+            texture.data.size());
+        if (!texHandle) {
+            LOGE("Failed to create texture: %dx%d, %d channels",
+                 texture.width, texture.height, texture.channels);
+        }
+        return texHandle;
     }
 
-    // 创建纹理
-    // 注意：terraria_texture2d_create 需要 RGBA 格式，如果原数据是 RGB，需要转换
-    patch_handle_t texHandle = terraria_texture2d_create(
-        texture.width,
-        texture.height,
-        format,
-        const_cast<void *>(static_cast<const void *>(texture.data.data())),
-        texture.data.size()
-    );
+    const auto rgba = to_rgba(texture);
 
-    if (!texHandle) {
-        LOGE("Failed to create texture: %dx%d, %d channels",
-             texture.width, texture.height, texture.channels);
-    } else {
-        LOGD("Created texture: %dx%d, %d channels",
-             texture.width, texture.height, texture.channels);
+    // Texture2D(int width, int height, TextureFormat format, bool mipChain)
+    patch_handle_t unity = patchlib_type_new_instance(api.tex_cls);
+    if (!patchlib_is_valid(unity)) {
+        LOGE("font texture: failed to allocate UnityEngine.Texture2D");
+        return PATCH_NULL;
     }
+    const int fmt = static_cast<int>(TEXTURE_FORMAT_RGBA32);
+    const bool mip_chain = true;
+    reinterpret_cast<void (*)(void *, int, int, int, bool)>(
+        patchlib_method_get_pointer(api.ctor))(unity, texture.width, texture.height, fmt, mip_chain);
 
-    return texHandle;
+    // 和 ImageConversion.LoadImage 一致：Bilinear(1) + Clamp(1)
+    reinterpret_cast<void (*)(void *, int)>(
+        patchlib_method_get_pointer(api.set_filter))(unity, 1);
+    reinterpret_cast<void (*)(void *, int)>(
+        patchlib_method_get_pointer(api.set_wrap))(unity, 1);
+
+    void *pixels = reinterpret_cast<void *(*)(void *, int)>(
+        patchlib_method_get_pointer(api.get_writable))(unity, 0);
+    if (!pixels) {
+        LOGE("font texture: GetWritableImageData returned NULL");
+        return PATCH_NULL;
+    }
+    memcpy(pixels, rgba.data(), static_cast<size_t>(texture.width) * texture.height * 4);
+
+    // Apply() 默认 updateMipmaps=true，会自动生成 mip 链
+    reinterpret_cast<void (*)(void *)>(
+        patchlib_method_get_pointer(api.apply))(unity);
+
+    // 包成 XNA Texture2D
+    patch_handle_t xna = patchlib_type_new_instance(api.xna_tex_cls);
+    if (!patchlib_is_valid(xna)) {
+        LOGE("font texture: failed to allocate XNA Texture2D");
+        return PATCH_NULL;
+    }
+    reinterpret_cast<void (*)(void *, void *)>(
+        patchlib_method_get_pointer(api.xna_ctor))(xna, unity);
+
+    LOGD("Created font texture: %dx%d (mipChain=true, bilinear)",
+         texture.width, texture.height);
+    return xna;
 }
 
 static patch_handle_t CreateTexture2DArray(const std::vector<TextureData> &textures) {

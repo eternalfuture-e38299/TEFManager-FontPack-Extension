@@ -3,8 +3,8 @@
   "name": "FontPackExtension",
   "author": "eternalfuture-e38299",
   "description": "字体包核心模块",
-  "version": "1.0.1",
-  "versionCode": 2,
+  "version": "1.0.2",
+  "versionCode": 3,
   "detailedInformationURL": "https://github.com/eternalfuture-e38299/TEFManager-FontPack-Extension",
   "dependence": [],
   "support": {
